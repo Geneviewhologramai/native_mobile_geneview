@@ -2,10 +2,12 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:speech_to_text/speech_to_text.dart' as stt;
 import 'package:flutter_tts/flutter_tts.dart';
+import 'package:audioplayers/audioplayers.dart';
 import 'package:http/http.dart' as http;
 import 'dart:convert';
 import 'config.dart';
 import 'video_module.dart';
+import 'elevenlabs_service.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
@@ -42,6 +44,7 @@ class _GeneviewCoreScreenState extends State<GeneviewCoreScreen> {
   final TextEditingController _queryController = TextEditingController();
   late stt.SpeechToText _speech;
   late FlutterTts _flutterTts;
+  late AudioPlayer _audioPlayer;
 
   bool _speechReady = false;
   bool _isListening = false;
@@ -53,6 +56,15 @@ class _GeneviewCoreScreenState extends State<GeneviewCoreScreen> {
   void initState() {
     super.initState();
     _speech = stt.SpeechToText();
+    _audioPlayer = AudioPlayer();
+
+    // Figyeljük az audió lejátszás állapotát a szinkron videó animációhoz
+    _audioPlayer.onPlayerStateChanged.listen((state) {
+      setState(() {
+        _isSpeakingAnimation = (state == PlayerState.playing);
+      });
+    });
+
     _initSpeech();
     _initTts();
   }
@@ -91,13 +103,23 @@ class _GeneviewCoreScreenState extends State<GeneviewCoreScreen> {
     });
   }
 
+  // Szöveg felolvasása: ElevenLabs klónozott hang prioritással, fallback a beépített TTS-re
   Future<void> _speak(String text) async {
-    if (text.isNotEmpty) {
+    if (text.isEmpty) return;
+
+    // Megpróbáljuk letölteni a klónozott hangot az ElevenLabs-tól
+    String? audioPath = await ElevenLabsService.synthesizeSpeech(text);
+
+    if (audioPath != null) {
+      // Ha sikerült, lejátsszuk a saját klónozott hangunkat
+      await _audioPlayer.play(DeviceFileSource(audioPath));
+    } else {
+      // Biztonsági fallback: ha hiba van vagy nincs kulcs, marad a beépített TTS
       await _flutterTts.speak(text);
     }
   }
 
-  // Valós idejű beszéd felismerés (Speech-to-Text) - tisztítva a deprecated paraméterektől
+  // Valós idejű beszéd felismerés (Speech-to-Text)
   void _listen() async {
     if (!_speechReady) {
       setState(() {
@@ -200,6 +222,7 @@ class _GeneviewCoreScreenState extends State<GeneviewCoreScreen> {
 
   @override
   void dispose() {
+    _audioPlayer.dispose();
     _flutterTts.stop();
     _speech.stop();
     _queryController.dispose();
